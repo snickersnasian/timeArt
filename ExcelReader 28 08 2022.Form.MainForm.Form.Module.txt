@@ -1,0 +1,518 @@
+﻿
+&AtClient
+Procedure AnalyseDocument(Command)
+	// Analyse the chosen sheet/s of the given .xls file
+	ErrorTitle =
+	NStr("ru = 'Ошибка чтения файла.'; 
+	|en = 'An error occurred while file reading'; 
+	|tr = 'An error occurred while file reading'");
+	
+	KeyArray = New Array();
+	// Get the map of the chosen sheet/s
+	Try		
+		MapArray = GetMapExcelBySpreadsheetDocument(PathToFileAtServer, KeyArray);				
+	Except
+		ErrorInformation = ErrorInfo();
+		Raise ErrorTitle + Chars.LF + Chars.LF + StringFunctionsClientServer.SubstituteParametersToString(
+		NStr("ru = 'Не удалось прочитать файл ""%1"" по причине:
+		|%2'; 
+		|en = 'Cannot get read the file ""%1"" due to:
+		|%2'; 
+		|tr = 'Cannot get read the file ""%1"" due to: 
+		|%2'"), FileName, BriefErrorDescription(ErrorInformation));	
+	EndTry;
+	
+	VT.Clear();
+	ValueArray = MapArray.Get(SheetName);			
+	FilterColumnsIntoVT_nguzui(ValueArray);
+	x = VT.Count();
+EndProcedure
+
+&AtServer
+Procedure FilterColumnsIntoVT_nguzui(ValueArray)
+	For Iterator = 1 To ValueArray[0].Count()-1 Do
+		NewLine = VT1.Add();
+		NewLine.OrderNumber = ValueArray[0][Iterator];
+		NewLine.OrderDate = ValueArray[1][Iterator];
+		NewLine.Buyer = ValueArray[2][Iterator];
+		NewLine.Product = ValueArray[4][Iterator];
+		NewLine.Quantity = ValueArray[5][Iterator];
+		NewLine.OrderPrice = ValueArray[6][Iterator];
+		NewLine.OrderCurrency = ValueArray[7][Iterator];
+		NewLine.Supplier = ValueArray[34][Iterator];
+		NewLine.SupplierInvoiceNumber = ValueArray[18][Iterator];
+		NewLine.InvoiceDate = ValueArray[13][Iterator];
+		NewLine.SupplierInvoiceCurrency = ValueArray[21][Iterator];
+		NewLine.SupplierInvoicePrice = ValueArray[19][Iterator];
+		NewLine.InvoiceNumber = ValueArray[12][Iterator];
+		NewLine.InvoiceCurrency = ValueArray[11][Iterator]
+	EndDo;	
+	
+	
+	Query = New Query;
+	Query.TempTablesManager = New TempTablesManager;
+	Query.Text ="SELECT
+	|	VT.OrderNumber AS OrderNumber,
+	|	VT.OrderDate AS OrderDate,
+	|	VT.Buyer AS Buyer,
+	|	VT.Product AS Product,
+	|	VT.Quantity AS Quantity,
+	|	VT.OrderPrice AS OrderPrice,
+	|	VT.OrderCurrency AS OrderCurrency,
+	|	VT.Supplier AS Supplier,
+	|	VT.SupplierInvoiceNumber AS SupplierInvoiceNumber,
+	|	VT.InvoiceDate AS InvoiceDate,
+	|	VT.SupplierInvoiceCurrency AS SupplierInvoiceCurrency,
+	|	VT.SupplierInvoicePrice AS SupplierInvoicePrice,
+	|	VT.InvoiceNumber AS InvoiceNumber,
+	|	VT.InvoiceCurrency AS InvoiceCurrency
+	|INTO ExcelData
+	|FROM
+	|	&VT1 AS VT
+	|;
+	|
+	|////////////////////////////////////////////////////////////////////////////////
+	|SELECT DISTINCT
+	|	ExcelData.Product AS Product
+	|FROM
+	|	ExcelData AS ExcelData
+	|		LEFT JOIN Catalog.Products AS Products
+	|		ON ExcelData.Product = Products.Description
+	|WHERE
+	|	Products.Code IS NULL
+	|;
+	|
+	|////////////////////////////////////////////////////////////////////////////////
+	|SELECT DISTINCT
+	|	ExcelData.Buyer AS Buyer
+	|FROM
+	|	ExcelData AS ExcelData
+	|		LEFT JOIN Catalog.Counterparties AS Counterparties
+	|		ON ExcelData.Buyer = Counterparties.Description
+	|WHERE
+	|	Counterparties.Code IS NULL
+	|;
+	|
+	|////////////////////////////////////////////////////////////////////////////////
+	|SELECT DISTINCT
+	|	ExcelData.OrderCurrency AS OrderCurrency
+	|FROM
+	|	ExcelData AS ExcelData
+	|		LEFT JOIN Catalog.Currencies AS Currencies
+	|		ON ExcelData.OrderCurrency = Currencies.Description
+	|WHERE
+	|	Currencies.Code IS NULL
+	|;
+	|
+	|////////////////////////////////////////////////////////////////////////////////
+	|SELECT DISTINCT
+	|	ExcelData.Supplier AS Supplier
+	|FROM
+	|	ExcelData AS ExcelData
+	|		LEFT JOIN Catalog.Counterparties AS Counterparties
+	|		ON ExcelData.Supplier = Counterparties.Description
+	|WHERE
+	|	Counterparties.Code IS NULL
+	|;
+	|
+	|////////////////////////////////////////////////////////////////////////////////
+	|SELECT DISTINCT
+	|	ExcelData.SupplierInvoiceCurrency AS SupplierInvoiceCurrency
+	|FROM
+	|	ExcelData AS ExcelData
+	|		LEFT JOIN Catalog.Currencies AS Currencies
+	|		ON ExcelData.SupplierInvoiceCurrency = Currencies.Description
+	|WHERE
+	|	Currencies.Code IS NULL
+	|;
+	|
+	|////////////////////////////////////////////////////////////////////////////////
+	|SELECT DISTINCT
+	|	ExcelData.InvoiceCurrency AS SupplierInvoiceCurrency
+	|FROM
+	|	ExcelData AS ExcelData
+	|		LEFT JOIN Catalog.Currencies AS Currencies
+	|		ON ExcelData.InvoiceCurrency = Currencies.Description
+	|WHERE
+	|	Currencies.Code IS NULL";
+	
+	Query.SetParameter("VT1", VT1.Unload());
+	QueryResultArray = Query.ExecuteBatch();
+	QueryResult_Product = QueryResultArray[1];
+	ProductInExcel = QueryResult_Product.Select();
+	
+	While ProductInExcel.Next() Do
+		
+		Product = Catalogs.Products.CreateItem();
+		Product.Description = ProductInExcel.Product;
+		Product.Comment = "Created automatically on " + String(CurrentDate());
+		Product.ProductsType = Enums.ProductsTypes.InventoryItem;
+		Product.ProductsCategory = Catalogs.ProductsCategories.FindByDescription("Main category");
+		Product.MeasurementUnit = Catalogs.UOMClassifier.FindByDescription("pcs");
+		Product.ReportUOM = Catalogs.UOMClassifier.FindByDescription("pcs");
+		Product.Write();
+		
+	EndDo;
+	
+	QueryResult_Counterparties = QueryResultArray[2];
+	CounterpartiesInExcel = QueryResult_Counterparties.Select();
+	
+	While CounterpartiesInExcel.Next() Do
+		
+		Counterparties = Catalogs.Counterparties.CreateItem();
+		Counterparties.Description = CounterpartiesInExcel.Buyer;
+		Counterparties.DescriptionFull =  CounterpartiesInExcel.Buyer;
+		Counterparties.Comment = "Created automatically on " + String(CurrentDate());
+		
+		Counterparties.Write();
+		
+	EndDo;
+	
+	
+	QueryResult_Counterparties = QueryResultArray[4];
+	CounterpartiesInExcel = QueryResult_Counterparties.Select();
+	
+	While CounterpartiesInExcel.Next() Do
+		
+		Counterparties = Catalogs.Counterparties.CreateItem();
+		Counterparties.Description = CounterpartiesInExcel.Supplier;
+		Counterparties.DescriptionFull =  CounterpartiesInExcel.Supplier;
+		Counterparties.Comment = "Created automatically on " + String(CurrentDate());
+		
+		Counterparties.Write();
+		
+	EndDo;
+	
+	
+	QueryResult_OrderCurrency = QueryResultArray[3];
+	OrderCurrencyInExcel = QueryResult_OrderCurrency.Select();
+	
+	//While OrderCurrencyInExcel.Next() Do
+	//			
+	//	OrderCurrency = Catalogs.Currencies.CreateItem();
+	//	OrderCurrency.Description = OrderCurrencyInExcel.OrderCurrency;
+	//	
+	//	OrderCurrency.Write();
+	//		
+	//EndDo;
+	
+	Query.Text = 
+	"SELECT
+	|	ExcelData.OrderNumber AS OrderNumber,
+	|	ExcelData.OrderDate AS OrderDate,
+	|	Counterparties_Buyer.Ref AS Buyer,
+	|	Products.Ref AS Product,
+	|	ExcelData.Quantity AS Quantity,
+	|	ExcelData.OrderPrice AS OrderPrice,
+	|	Order_Currency.Ref AS OrderCurrency,
+	|	Counterparties_Supplier.Ref AS Supplier,
+	|	ExcelData.SupplierInvoiceNumber AS SupplierInvoiceNumber,
+	|	ExcelData.InvoiceDate AS InvoiceDate,
+	|	Currencies_SupplierInvoiceCurrency.Ref AS SupplierInvoiceCurrency,
+	|	ExcelData.SupplierInvoicePrice AS SupplierInvoicePrice,
+	|	ExcelData.InvoiceNumber AS InvoiceNumber,
+	|	Currencies_InvoiceCurrency.Ref AS InvoiceCurrency
+	|INTO TT_Result
+	|FROM
+	|	ExcelData AS ExcelData
+	|		LEFT JOIN Catalog.Products AS Products
+	|		ON (ExcelData.Product <> """")
+	|			AND ExcelData.Product = Products.Description
+	|		LEFT JOIN Catalog.Currencies AS Order_Currency
+	|		ON (ExcelData.OrderCurrency <> """")
+	|			AND ExcelData.OrderCurrency = Order_Currency.Description
+	|		LEFT JOIN Catalog.Currencies AS Currencies_SupplierInvoiceCurrency
+	|		ON (ExcelData.SupplierInvoiceCurrency <> """")
+	|			AND ExcelData.SupplierInvoiceCurrency = Currencies_SupplierInvoiceCurrency.Description
+	|		LEFT JOIN Catalog.Currencies AS Currencies_InvoiceCurrency
+	|		ON (ExcelData.InvoiceCurrency <> """")
+	|			AND ExcelData.InvoiceCurrency = Currencies_InvoiceCurrency.Description
+	|		LEFT JOIN Catalog.Counterparties AS Counterparties_Buyer
+	|		ON (ExcelData.Buyer <> """")
+	|			AND ExcelData.Buyer = Counterparties_Buyer.Description
+	|		LEFT JOIN Catalog.Counterparties AS Counterparties_Supplier
+	|		ON (ExcelData.Supplier <> """")
+	|			AND ExcelData.Supplier = Counterparties_Supplier.Description
+	|;
+	|
+	|////////////////////////////////////////////////////////////////////////////////
+	|SELECT
+	|	TT_Result.OrderNumber AS OrderNumber,
+	|	TT_Result.OrderDate AS OrderDate,
+	|	TT_Result.Buyer AS Buyer,
+	|	TT_Result.Product AS Product,
+	|	TT_Result.Quantity AS Quantity,
+	|	TT_Result.OrderPrice AS OrderPrice,
+	|	TT_Result.OrderCurrency AS OrderCurrency,
+	|	TT_Result.Supplier AS Supplier,
+	|	TT_Result.SupplierInvoiceNumber AS SupplierInvoiceNumber,
+	|	TT_Result.InvoiceDate AS InvoiceDate,
+	|	TT_Result.SupplierInvoiceCurrency AS SupplierInvoiceCurrency,
+	|	TT_Result.SupplierInvoicePrice AS SupplierInvoicePrice,
+	|	TT_Result.InvoiceNumber AS InvoiceNumber,
+	|	TT_Result.InvoiceCurrency AS InvoiceCurrency
+	|FROM
+	|	TT_Result AS TT_Result
+	|TOTALS
+	|	MAX(OrderDate),
+	|	MAX(Buyer),
+	|	MAX(OrderCurrency)
+	|BY
+	|	OrderNumber";
+	
+	PreparedData = Query.Execute();
+	
+	SelectionOrderNumber = PreparedData.Select(QueryResultIteration.ByGroups);  // zuizun 
+	Temp_VT_Data = PreparedData.Unload(); 
+	Temp_VT_Data.GroupBy("InvoiceNumber, Supplier, InvoiceDate, SupplierInvoiceCurrency, SupplierInvoiceNumber");
+	
+	VT_Data = New ValueTable();
+	StringType = New TypeDescription("String");
+	DateType = New TypeDescription("Date");
+	CounterpartiesRefType = New TypeDescription("CatalogRef.Counterparties");
+	CurrencyRefType = New TypeDescription("CatalogRef.Currencies");
+	
+	VT_Data.Columns.Add("InvoiceNumber", StringType, "InvoiceNumber");
+	VT_Data.Columns.Add("SupplierInvoiceNumber", StringType, "SupplierInvoiceNumber");
+	VT_Data.Columns.Add("InvoiceDate", DateType, "InvoiceDate"); 
+	VT_Data.Columns.Add("Supplier", CounterpartiesRefType, "Supplier");
+	VT_Data.Columns.Add("SupplierInvoiceCurrency", CurrencyRefType, "SupplierInvoiceCurrency"); 
+	
+	For Each Row In Temp_VT_Data do
+		If Row.InvoiceDate = Null Or Row.InvoiceDate = '00010101' Then
+			Continue;
+		Else
+			NewLine = VT_Data.Add();
+			FillPropertyValues(NewLine, Row);
+		EndIf;
+	EndDo;
+	
+	CreateSalesOrder(SelectionOrderNumber, VT_Data);
+	
+EndProcedure
+
+&AtServer
+Procedure CreateSalesOrder(SelectionOrderNumber, VT_Data) // zuizun
+	
+	CurrRow = 0;
+	
+	While SelectionOrderNumber.Next() Do
+		SalesOrderDoc = Documents.SalesOrder.CreateDocument();
+		SalesOrderDoc.Date = SelectionOrderNumber.OrderDate;
+		SalesOrderDoc.Counterparty = SelectionOrderNumber.Buyer;
+		SalesOrderDoc.Number = SelectionOrderNumber.OrderNumber;
+		SalesOrderDoc.DocumentCurrency = SelectionOrderNumber.OrderCurrency; 
+		
+		SelectionDetailRecords = SelectionOrderNumber.Select();
+		
+		While SelectionDetailRecords.Next() Do
+			If SelectionDetailRecords.Quantity <> 0 Then 
+				Inventory = SalesOrderDoc.Inventory.Add();
+				Inventory.Price	= SelectionDetailRecords.OrderPrice;
+				Inventory.Products = SelectionDetailRecords.Product;
+				Inventory.Quantity = SelectionDetailRecords.Quantity;
+				Inventory.MeasurementUnit = SelectionDetailRecords.Product.MeasurementUnit;
+			EndIf;
+		EndDo;
+		Try 
+			SalesOrderDoc.Write(DocumentWriteMode.Write);
+			
+			//If VT_Data.Property("SupplierInvoiceNumber") Then
+			//	For Each VT_DataRow In VT_Data Do 
+			//		CreateSupplierInvoice(SalesOrderDoc, SelectionOrderNumber, VT_DataRow);	
+			//	EndDo;
+			//EndIf;
+			
+			VT_Data.GroupBy("InvoiceNumber, Supplier, InvoiceDate, SupplierInvoiceCurrency");
+			
+			CreateSalesInvoice(SalesOrderDoc, SelectionOrderNumber, VT_Data[CurrRow]);
+			
+		Except
+			Message(ErrorDescription());
+		EndTry;
+		
+		CurrRow = CurrRow + 1;
+	EndDo;
+	
+EndProcedure
+
+&AtServer
+Procedure CreateSalesInvoice(SalesOrderDoc, SelectionOrderNumber, VT_Data)   // zuizun
+	
+	SalesInvoiceDoc = Documents.SalesInvoice.CreateDocument();
+	SalesInvoiceDoc.Counterparty = SalesOrderDoc.Counterparty;
+	SalesInvoiceDoc.Date = SalesOrderDoc.Date;
+	SalesInvoiceDoc.Number = VT_Data.InvoiceNumber;
+	SalesInvoiceDoc.Order = SalesOrderDoc.Ref;
+	SalesInvoiceDoc.DocumentCurrency = VT_Data.SupplierInvoiceCurrency;
+	SalesInvoiceDoc.Date = VT_Data.InvoiceDate; 
+	
+	SelectionDetailRecords = SelectionOrderNumber.Select();
+	
+	While SelectionDetailRecords.Next() Do
+		If SelectionDetailRecords.Quantity <> 0 Then 
+			Inventory = SalesInvoiceDoc.Inventory.Add();
+			Inventory.Price	= SelectionDetailRecords.OrderPrice;
+			Inventory.Products = SelectionDetailRecords.Product;
+			Inventory.Quantity = SelectionDetailRecords.Quantity;
+			Inventory.MeasurementUnit = SelectionDetailRecords.Product.MeasurementUnit;
+		EndIf;
+	EndDo;
+	
+	
+	SalesInvoiceDoc.Write(DocumentWriteMode.Write);
+	
+	
+EndProcedure
+
+
+&AtServer
+Procedure CreateSupplierInvoice(SalesOrderDoc, SelectionOrderNumber, VT_Data)   // zuizun
+	
+	SupplierInvoiceDoc = Documents.SupplierInvoice.CreateDocument();
+	SupplierInvoiceDoc.Counterparty = VT_Data.Supplier;
+	SupplierInvoiceDoc.Date = SalesOrderDoc.Date;
+	SupplierInvoiceDoc.Number = VT_Data.SupplierInvoiceNumber;
+	SupplierInvoiceDoc.Order = SalesOrderDoc.Ref;
+	SupplierInvoiceDoc.DocumentCurrency = SelectionOrderNumber.OrderCurrency;
+	SupplierInvoiceDoc.Date = VT_Data.InvoiceDate; 
+	
+	SelectionDetailRecords = SelectionOrderNumber.Select();
+	
+	While SelectionDetailRecords.Next() Do	
+		Inventory = SupplierInvoiceDoc.Inventory.Add();
+		Inventory.Price	= SelectionDetailRecords.SupplierInvoicePrice;
+		Inventory.Products = SelectionDetailRecords.Product;
+		Inventory.Quantity = SelectionDetailRecords.Quantity;
+		Inventory.MeasurementUnit = SelectionDetailRecords.Product.MeasurementUnit;
+		
+	EndDo;
+	
+	
+	SupplierInvoiceDoc.Write(DocumentWriteMode.Write);
+	
+EndProcedure
+
+
+
+
+
+
+&AtServer
+Function GetMapExcelBySpreadsheetDocument(PathToExcel, KeyArray) Export
+	// Map the chosen area of the .xls file
+	PathToExcelArray = PathToExcel;
+	
+	MapArray = New Map();
+	
+	If TypeOf(PathToExcelArray) = Type("String") Then
+		PathToExcel = PathToExcelArray;		
+		PathToExcelArray = New Array;
+		PathToExcelArray.Add(PathToExcel);
+	EndIf;
+	
+	For Each PathToExcel In PathToExcelArray Do
+		SSheetAll = New SpreadsheetDocument;
+		Try
+			If True Then
+				SSheetAll.Read(PathToExcel, SpreadsheetDocumentValuesReadingMode.Value);
+			Else
+				SSheetAll.Read(PathToExcel, SpreadsheetDocumentValuesReadingMode.Text);
+			EndIf;
+		Except
+			//CreateLogRecord("Error", " Spreadsheet "+PathToExcel+": "+ErrorDescription());
+		EndTry;
+		
+		SSheet = SSheetAll;
+		
+		// If Select all button is checked, loop through and analyse all sheets
+		If SheetName = "Select all" Then
+			
+			For Each Area In SSheetAll.Areas Do
+				AnalyseSheet(Area, SSheetAll, KeyArray, MapArray); 
+			EndDo;
+			// Analyse predetermined sheet
+		Else
+			Area = SSheetAll.Area(SheetName);
+			AnalyseSheet(Area, SSheetAll, KeyArray, MapArray);
+		EndIf;				
+	EndDo;
+	
+	Return MapArray;  
+EndFunction
+
+&AtServer
+Procedure AnalyseSheet(Area, SSheetAll, KeyArray, MapArray)
+	// Analyse sheet then put into MapArray
+	SSheet = SSheetAll.GetArea(Area.Name);
+	KeyArray.Add(Area.Name);
+	// OutputArray is all values in every row	
+	OutputArray = New Array;
+	RowNumber = 0;
+	
+	For ColumnNumber = 1 To SSheet.TableWidth Do
+		RowArray = New Array;
+		For RowNumber = 1 To SSheet.TableHeight Do
+			CurrentRange = SSheet.GetArea("R"+Format(RowNumber,"NG=0")+"C"+Format(ColumnNumber,"NG=0")).CurrentArea;
+			// ContainsValue - Check availability of getting value (type Date)
+			Value = ? (CurrentRange.ContainsValue, CurrentRange.Value, CurrentRange.Text);
+			RowArray.Add(Value);	
+		EndDo;
+		OutputArray.Add(RowArray);	
+	EndDo;
+	MapArray.Insert(Area.Name, OutputArray);	
+EndProcedure
+
+&AtClient
+Procedure PathToFileStartChoice(Item, ChoiceData, StandardProcessing)
+	// Choose and upload/save an .xls file to server
+	// NOTE: The file is only saved when the procedure is ended
+	//Items.SheetName.ChoiceList.Clear();
+	//Items.DateFilter.ChoiceList.Clear();
+	BeginPutFilesToServer(New NotifyDescription("EndOfFileChoose", ThisObject),,, New PutFilesDialogParameters(), UniqueKey);
+	// Create a choice list for list of sheets in the chosen .xls file
+EndProcedure
+
+&AtClient
+Procedure EndOfFileChoose(SelectedFiles, AdditionalParameters) Export
+	// Check if there is any selected file	
+	If SelectedFiles = Undefined Then
+		Return;
+	EndIf;	
+	// Initilise properties of chosen file
+	If SelectedFiles.Count() > 0 Then  
+		FileName = SelectedFiles[0].FileRef.Name;
+		PathToFile = SelectedFiles[0].Address;
+		// Start saving file to server
+		SaveFileAtServer(SelectedFiles[0].Address, SelectedFiles[0].FileRef.Extension)
+	EndIf;	
+	
+EndProcedure
+
+&AtServer
+Procedure SaveFileAtServer(FileAddress, FileExtension)
+	// Initialise all properties of the saved file at server
+	BinaryData = GetFromTempStorage(FileAddress);
+	PathToFileAtServer = GetTempFileName(FileExtension);
+	BinaryData.Write(PathToFileAtServer);
+	// Add sheets into the SheetName choice list
+	ListSheetName();
+EndProcedure
+
+&AtServer
+Procedure ListSheetName()
+	// Use the SS to read through the chosen .xls file
+	SS = New SpreadsheetDocument;
+	SS.Read(PathToFileAtServer);
+	// Add each sheet into the choice list
+	Items.SheetName.ChoiceList.Add("Select all");
+	For Each Sheet In SS.Areas Do
+		Items.SheetName.ChoiceList.Add(Sheet.Name);
+	EndDo;
+	Items.SheetName.Visible = True;
+EndProcedure
+
+&AtServer
+Procedure OnCreateAtServer(Cancel, StandardProcessing)
+	SheetName = "Select all";
+EndProcedure
